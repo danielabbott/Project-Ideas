@@ -1,0 +1,20 @@
+GPU-accelerated (Vulkan/OpenGL)
+NV_path_rendering?
+
+Divide image into 8x8 pixel blocks
+Each block has a list of vector elements which are (partly) in the 8x8 region
+Fragment shader runs for each pixel, access list for block pixel is in, determines pixel colour.
+
+For each path:
+Go across scanline from pixel in direction towards nearest edge, count intersections on each side of pixel
+Find all intersections between current scanline (horizontal row of pixels across full width of canvas) and the edges of the path
+Number of intersections is always even
+If number of intersections on each side is odd then the pixel is inside the shape.
+
+Convert SVG path data to list of points?
+Store in a R32f buffer texture.
+1 float for opcode (move/line/curve/etc.)
+2+ parameters depending on opcode
+
+Font rendering?
+Convert characters to paths.

@@ -1,0 +1,39 @@
+Matchmaking server: Go, HTTP server library, MariaDB/PostgreSQL
+Go HTTP server sits behind nginx proxy (nginx provides https)
+
+Web server: nginx, hosts website for game, also forwards&caches player statistics requests to matchmaking server
+Website can show live player statistics
+PHP
+
+Matchmaking server database contains list of recognised community servers, player email,nickname,passwords (or itch.io API key etc?), players banned from official servers, players suspected of being cheaters, etc.
+
+
+
+
+
+
+Game servers connect to matchmaking server and send an update every few seconds.	
+	active games
+	who is in each game: name, ping, class, etc.
+	etc.
+
+client connects to matchmaking server (HTTPS)
+logs in
+gets server list
+user picks a server
+client connects to server (TCP&UDP)
+joins game
+
+* udp connection is checksum authenticated using shared secret (exchanged over tls)
+	or dtls?
+
+
+one server hosts 1 - 5 games per thread
+1 process per CPU (NUMA), pinned to CPU (threads free to be switched between cores by OS)
+games can be moved between threads for load balancing
+
+
+
+
+
+

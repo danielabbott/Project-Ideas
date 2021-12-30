@@ -1,0 +1,96 @@
+Content-focussed (e.g. Facebook groups, DeviantArt, blogs) rather than status-updates-focuseed (e.g. Twitter, Mastodon)
+
+
+Groups
+	Members of groups can vote on whoe becomes moderators
+	groups become 'democratic' when they reach 10+ members
+	Users can add their posts to any number of groups that they are a member of
+
+
+Sites
+	Individuals can host their own sites themed around a particular topic e.g. sports, anime, programming, etc.
+	Groups within the site are more niche e.g. particular TV series or sport team etc.
+
+
+Meta-sites?
+	Links websites together via common API
+	Use same account across multiple sites, aggregate feed?
+	Shows popular posts from all linked sites
+
+
+
+Tags? Are they really needed if media is added into groups?
+Friends + Chat?
+
+Monetisation?
+	Users can buy currency
+	Upvoting a post costs e.g. 2p, site owner keeps 1p, recipient keeps 1p
+
+
+Moderation
+Ban user accounts, ban IP address from registering new accounts
+
+Each site manages its own moderation
+ability to (auto?)mark users/groups as nsfw
+	hides them to people who haven't opted in to nsfw
+	unless entire site is nsfw
+
+
+Site-wide & group 'democracy'?
+Lottotery?
+People nominate themselves for site/group leader, users vote out worst candidates, moderators/admins picked from remaining people at random
+
+
+
+Progressive Web app (plus subdomain with alternative no-JavaScript version of the website)
+
+All on web page, JavaScript loads page contents (async requests for server-generated JSON files and static HTML,CSS,JS files) and modifies html & back history
+
+When site is first loaded, server responds with same HTML regardless of page and pushes minimal CSS & JavaScript
+Service worker stops html,css,js from being re-downloaded in future (Checks for updates regularly)
+
+Javascript asynchronously loads .js files which render pages
+	e.g. page_groups.js, page_home.js, page_settings.js
+Service worker caches this as well
+
+
+
+basic.whatever.com subdomain which uses server-side html generation, no JavaScript
+If main site is loaded with javascript disabled, show a full-screen overlay linking to the basic site
+
+
+This would break web crawlers. They would have to crawl the basic version of the website instead.
+Basic version could include a popup offering to redirect to the web app which appears when JS is enabled.
+	^ Add a do not ask again button
+
+
+WASM for shrinking image files for thumbnails & recompressing to webp on client
+	convert everything to webp
+	let user choose between lossy and lossless (default lossy)
+		^ hide that under advanced options
+
+
+
+
+Backend uses Go
+
+Login rate limiter (one login attempt every 0.5 seconds or something)
+Password minimum length of 8 characters
+Ban passwords from 100 most common list
+
+argon2 hash for passwords
+seperate login server to offload data?
+
+
+RDBMS (mariadb/postgres) or reddis as primary database?
+Separate databases for important & less important?
+Important: user credentials, payments/balance / premium membership
+Less important: posts, profile pages, etc.
+
+RDB for important data
+NoSQL DB for less important
+
+
+
+
+

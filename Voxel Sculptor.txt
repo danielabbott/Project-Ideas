@@ -1,0 +1,8 @@
+Octree of cube textures (ray casting)
+Each voxel stores a normal (r8g8, normalised (z is derived from x and y in shader))
+Bilinear filtering
+Chunks can be in sparse texture or octree stores sampler index
+
+Each entry in octree is either empty, solid, or 8 child indices
+
+Octree parsed per-pixel on GPU

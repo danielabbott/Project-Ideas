@@ -1,0 +1,6 @@
+Or JPEG or WebP?
+Just decoder or encoder as well?
+Zig deflate implementation or zlib?
+Or custom image format?
+	Lossless
+	Filtering (similar to PNG) + zstd

@@ -1,0 +1,13 @@
+Sparse texture for each layer - only allocate memory for 128x128 pixel blocks which contain image data
+OpenGL fallback: texture per 128x128 region.
+
+Project is stored across multiple files
+Configuration file for metadata & vector layers, .png file for every bitmap layer
+
+Option for exporting to .tar file with lossless webp instead of png (for backups/transfer)
+
+Use game engine project for abstraction over graphics APIs, window management, input (tablet), GUI
+SVG project for vector graphics
+
+Old prototype: https://github.com/danielabbott/Painting-Application-prototype
+	

@@ -1,0 +1,6 @@
+Take old io uring zig https server project and upgrade to latest zig version & change to use zig stdlib io uring code instead of liburing.
+
+Game engine project will have io uring abstraction for thread-per-core server model, maybe move that into a separate library repo
+
+Could implement HTTP2
+HTTP3 (quic)?

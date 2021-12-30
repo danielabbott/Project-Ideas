@@ -1,0 +1,63 @@
+Similar to BitTorrent
+
+An archive (torrent) contains many files
+Data in archive split into 256KiB data segments and 16KiB metadata segments (for file names & sizes & segment start index+offset)
+If archive size is not a multiple of 256KiB then the final segment is padded with zeroes
+Metadata size is rounded up to nearest 16KiB (padded with zeroes)
+
+Archive has public/private key pair (Ed25519), private key deleted after encryption
+
+Each segment is encrypted with AES-128-GCM
+Segments have a header containing: archive UUID, segment index (metadata segments have negative indices), AES initialisation vector, gcm tag, Ed25519 signature of this header
+
+Archives are shared as a 'handle' (base64 string) containing the public key and other data signed with private key: UUID, AES key, segment count, meta segment count
+
+Peers advertise which segments they have and which they need
+segments transferred in random order
+
+Large seed servers running in cloud: store files in AWS S3 / GCP bucket, use local storage & RAM as cache
+Smaller seed servers which just have the RAM and local storage cache
+
+
+
+Central file repository?
+Any user can upload a base64 archive handle along with a name and description (maybe signed with Private Key)
+
+
+Distributed archive search: request (by UUID) traverses network (across entire internet until found or time-to-live expires)
+
+
+User inputs IP+port of peers (other users or seed servers) into client
+	* Only works if the peer has set up port fowarding & firewall rule
+Peers share IP+port of other peers, every client stores a list of 100 peers
+Client keeps a reputation score for each peer (based on bandwidth, failed integrity checks, etc.), favours higher-scoring peers
+
+
+Client runs constantly in background, downloads and shares segments of any archive, even archives not requested by user (nearby peers constantly exchange segments so files spread across internet)
+Downloaded segments are identifiable only by the archive UUID and segment ID, no way of knowing what the data is unless the UUID is listed online somewhere.
+Web crawlers would be able to search the internet to find handles. Handles could be encrypted somehow?
+
+
+Blacklist feeds (similar to RSS) that can be subscribed to so the client software will reject and automatically delete data segments belonging to blacklisted UUIDs.
+
+
+Peers communicate via QUIC.
+	QUIC runs on top of UDP which will make peer-to-peer connections easier (UDP hole punching is more reliable then TCP hole punching)
+
+UDP Hole punching
+	Peers always have an ephemeral UDP port listening port.
+
+	Peers learn of each other and trade IP addresses and ports via a common peer (the peer in common knows the actual port numbers to use as a user's router may change the source port number (NAT))
+	Peer A(listening on external port 100) learns of peer C(listening on external port 200) through peer B
+	A sends introduce_me_to (C) request to B
+	A sends UDP packet to C (A:100->C:200)
+	B forwards request to C
+	C does not receive the packet from A (A:100->C:200), it is blocked by their router
+	C sends UDP packet to A (C:200->A:100)
+	A does receive this (router saw the first packet and interprets this as an outbound connection)
+	A sends another packet to C (A:100->C:200)
+	C does receive this.
+	Communication established. Now start QUIC connection.
+
+	This should work for address/port restricted cone NATs but not for symmetric NATs
+	Could use uPnP to set up port forwarding automatically, if available.

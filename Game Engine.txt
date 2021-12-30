@@ -1,0 +1,15 @@
+Zig
+
+Focus on multiplayer features?
+2D or 3D
+Vulkan 1.2 with fallback OpenGL 3.3 and OpenGLES 2 renderers
+
+
+
+Web export (Webgl + wasm)?
+simple physics (fps character-enviornment collisions & ray picking)
+Scripting language (squirrel?)?
+
+
+GUI font rendering: https://github.com/danielabbott/OpenGL-Subpixel-Fonts
+Solving expressions (e.g. 2*4+5) for GUI: https://github.com/danielabbott/Arithmetic-Expressions

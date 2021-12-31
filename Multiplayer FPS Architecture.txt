@@ -1,9 +1,9 @@
-Matchmaking server: Go, HTTP server library, MariaDB/PostgreSQL
-Go HTTP server sits behind nginx proxy (nginx provides https)
+Matchmaking server: Go HTTPS server, MariaDB/PostgreSQL/SQLite?
 
-Web server: nginx, hosts website for game, also forwards&caches player statistics requests to matchmaking server
-Website can show live player statistics
-PHP
+Web server: static website using nginx
+Website shows live player statistics (async json request)
+Web server forwards (and caches) player statistics requests to matchmaking server
+
 
 Matchmaking server database contains list of recognised community servers, player email,nickname,passwords (or itch.io API key etc?), players banned from official servers, players suspected of being cheaters, etc.
 

@@ -79,7 +79,7 @@ Password minimum length of 8 characters
 Ban passwords from 100 most common list
 
 argon2 hash for passwords
-seperate login server to offload data?
+separate login server to offload data?
 
 
 RDBMS (mariadb/postgres) or reddis as primary database?
@@ -91,6 +91,7 @@ RDB for important data
 NoSQL DB for less important
 
 
-
+https://github.com/graymeta/stow
+^ Abstraction over AWS S3 / Google Cloud Storage / Local file system
 
 

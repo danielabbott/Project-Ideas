@@ -7,8 +7,9 @@ Metadata size is rounded up to nearest 16KiB (padded with zeroes)
 
 Archive has public/private key pair (Ed25519), private key deleted after encryption
 
-Each segment is encrypted with AES-128-GCM
-Segments have a header containing: archive UUID, segment index (metadata segments have negative indices), AES initialisation vector, gcm tag, Ed25519 signature of this header
+Each segment is encrypted with AES-128-CTR and the ciphertext is hashed with BLAKE3
+Segments have a header containing: archive UUID, segment index (metadata segments have negative indices), AES initialisation vector, BLAKE3 hash of ciphertext, Ed25519 signature of this header
+
 
 Archives are shared as a 'handle' (base64 string) containing the public key and other data signed with private key: UUID, AES key, segment count, meta segment count
 
@@ -61,3 +62,58 @@ UDP Hole punching
 
 	This should work for address/port restricted cone NATs but not for symmetric NATs
 	Could use uPnP to set up port forwarding automatically, if available.
+
+Anti-spam: proof of work system for creating archives?
+
+
+
+TODO: How to discard segments that are no longer relevant (no-one is downloading the archive)?
+
+
+
+SQLite database:
+
+CREATE TABLE segments (
+	archive_uuid BLOB(16), 
+	segment_id INT(4), 
+    CHECK (segment_id >= -1024),
+	aes_iv BLOB(16), 
+	blake3_hash BLOB(32),
+	header_signature BLOB(64),
+
+	-- Last time this segment was sent to (or received from) a peer
+	last_shared TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+	-- Last time a peer wanted this file to download, not just for seeding
+	last_requested TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+	PRIMARY KEY (archive_uuid, segment_id)
+);
+
+CREATE INDEX segments_last_shared_index ON segments (last_shared);
+CREATE INDEX segments_last_requested_index ON segments (last_requested);
+
+CREATE TABLE peers (
+	ip BLOB(16),
+	port UNSIGNED INT(2),
+
+	reputation UNSIGNED INT1 DEFAULT 100,
+	latency UNSIGNED INT2 DEFAULT 20,
+
+	last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+	PRIMARY KEY (ip, port)
+);
+
+CREATE INDEX peers_last_seen_index ON peers (last_seen);
+
+
+CREATE TABLE archives (
+	uuid BLOB(16) PRIMARY KEY,
+	public_key BLOB(32),
+	meta_segment_count UNSIGNED INT2,
+	data_segment_count UNSIGNED INT4,
+    CHECK (meta_segment_count > 0 AND meta_segment_count <= 1024),
+    CHECK (data_segment_count > 0 AND data_segment_count <= 2147483648)
+
+);

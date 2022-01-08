@@ -1,15 +1,175 @@
 Zig
 
-Focus on multiplayer features?
-2D or 3D
+Multiplayer features- player movement, packet loss correction etc.
+Procedural animation
+Support both 2D and 3D
+	2D works same as 3D but shadow maps are 1D, perspective matrix is ortho, etc. ?
 Vulkan 1.2 with fallback OpenGL 3.3 and OpenGLES 2 renderers
-
-
-
 Web export (Webgl + wasm)?
-simple physics (fps character-enviornment collisions & ray picking)
+Simple physics (fps character-environment collisions & ray picking)
 Scripting language (squirrel?)?
+Light baking?
+Animation blending?
+Procedural animation?
+
+
+Engine is a zig library
+Editor program is a zig program which uses the engine library
 
 
 GUI font rendering: https://github.com/danielabbott/OpenGL-Subpixel-Fonts
+	VK_POLYGON_MODE_FILL_RECTANGLE_NV (VK_NV_fill_rectangle)
 Solving expressions (e.g. 2*4+5) for GUI: https://github.com/danielabbott/Arithmetic-Expressions
+
+
+
+Object sorting
+	Geometry using the same vertex format is (ideally) grouped all in one vertex+index buffer
+	All draws using the same buffer & pipeline are done in a single (multi)draw call
+		For depth-only, only buffer & vertex shader need to be the same
+	Pipeline objects encapsulate 2 vulkan pipelines: render & depth-only
+
+	Might be possible to use 1 multidraw call per view on nvidia gpus: VK_NV_device_generated_commands
+
+	Objects with the same pipeline are sorted by mesh subregion (improve vertex data cache hitrate), 
+		then sorted front to back (reduce overdraw in depth-only render passes - might reduce memory writes)
+
+
+
+SSAO
+	Full screen pass into 4-layer half-resolution array texture
+	https://developer.nvidia.com/sites/default/files/akamai/gameworks/samples/DeinterleavedTexturing.pdf
+	Then kawase blur
+
+
+Render graph
+Programmatically define render pipeline out of render stages
+Each stage defines the image inputs and outputs and dependencies on other stages
+Dependencies on framebuffers from previous frames is inferred
+Command buffers that only issue fullscreen draws are cached (e.g. ssao, bloom)
+
+
+
+
+Draw data is in 2 categories: geometry and material
+Geometry data is an array of matrices and min+range (for normalised positions)
+	1 geometry array per view
+	Shadow map render passes & depth pass need min+range,mvp matrix, material index per object
+	Full render pass needs ^ plus model & normal matrix per object
+Material array contains colour, specular intensity, texture, normal map, etc.
+
+require drawIndirectFirstInstance
+Multidraw first instance & push constant used to calculate draw index
+Draw index used to access the per-view geometry array
+Geometry array contains matrices etc. plus material index
+Material index passed to fragment shader.
+Fragment shader access material SSBO
+
+For OpenGL renderer, none of this is done. Instead, all the data is passed in a uniform block which is updated for each draw call.
+
+For both renderers, there is a per-view uniform with the view matrix, perspective matrix, view-persp, etc.
+
+
+
+
+Scene graph:
+	Transform				Position in 3D space
+	MaterialRenderer		Object to render (Material + SubMesh + optional SkeletonAnimator)
+	Material				Specular, texture, normal map, colour, etc.
+	SkeletonAnimator		Deforms mesh by transforming bones
+	SubMesh					Contiguous subset of vertices/indices in a mesh
+	Mesh					VkBuffer + mesh metadata (vertex attributes, etc.)
+	Pipeline				Combines the separate render & depth-ony pipelines
+	DepthOnlyPipeline		Depth-only version of shader(s) for shadow maps and depth prepass
+	RenderPipeline			Normal HDR shader
+	BoneTracker				Sets attached transform(s) to match transform of a bone in a SkeletonAnimator
+
+
+
+Render graph traversal pseudocode:
+
+	draws = []
+	for material_renderer in material_renderer_pool:
+		pipeline = material_renderer.pipeline.render
+		submesh = material_renderer.submesh
+		mesh = submesh.mesh
+		for transform in material_renderer:
+			if !transform.isCulled():
+				viewspace_distance = transform.getViewspaceDistance()
+				draws.append({material_renderer, viewspace_distance, pipeline, mesh, submesh})
+	
+	draws.sortBy(pipeline, mesh, submesh, viewspace_distance)
+	# ** pipelines with transparency sorted to the end
+
+Traversal & sort is done once per view so that object culling can work and objects can be disabled per-view (e.g. to stop an object casting shadows) 
+
+Asset types:
+	Model (mesh, materials, animations)
+	Material
+	Texture
+	Audio
+	Text
+	Binary
+
+Assets are a .asset (metadata text) file and 0 or more data files.
+
+Assets are grouped into packages
+A package consists of a meta file and 1 data file
+
+Occlusion culling
+	Meshes have bounding box (AABB)
+	Skeleton animated meshes have AABB for each animation frame
+	World+camera transforms applied to each meshes AABB, new AABB generated
+	That AABB is tested for intersection with the camera 'pyramid
+	Camera pyramid starts at 0,0 (camera space) and extends out to infinity
+	The near and far planes fit perfectly into this pyramid
+
+	If any of the 8 vertices of the AABB are inside the pyramid*, there is an intersection
+	If the 8 vertices surround the pyramid **, there is an intersection
+
+	* take vertexes Z coord, calculate dimensions of pyramid cross section for that Z, point in square test
+	** top 4 vertices of AABB are above the pyramid, 4 right vertices to right, etc.
+
+
+Characters holding objects
+	Character represented by 1 or more SubMesh (1 SubMesh per material in Blender)
+	1 material renderer per SubMesh
+	Material renderers share a SkeletonAnimator
+
+	Character transform has a child transform: hand_hold_transform
+	hand_hold_transform has a BoneTracker which uses the same SkeletonAnimator as before
+	Every frame, hand_hold_transform is updated to match position of a bone in the armature which represents the inside of the characters hand
+	When the player is holding something, the transform for the object is added as a child of hand_hold_transform
+
+
+
+Multithreading
+	Job system with dependencies
+	Worker jobs with callbacks
+	IO jobs with fixed functionality (read, write, read_full, tcp_send, etc.) plus a callback (runs on IO thread)
+	
+	1 worker thread per core
+	Linux 5.6+: 1 io thread using io_uring
+	Other OSes: 1 io thread for file read, 1 for file write, 2 (recv/send) per network socket.
+
+	When a running job creates new jobs, they are scheduled immediately and may run in the background.
+	If the active job needs to wait for them then they are added as a dependency and a new callback for the active job is set. It is then moved back to the pending state.
+
+	Jobs are reference counted.
+	Dependencies add 1 to the reference counter, counter subtracted when job starts.
+
+
+	Example task graph for game start:
+		load_settings_file
+		load_main_menu_scene_file
+		load_common_assets_meta_files
+
+		init_window_sound_etc: load_settings_file
+		parse_main_menu_scene_file: load_main_menu_scene_file
+		load_main_menu_scene: load_common_assets_meta_files, parse_main_menu_scene_file
+
+		game_loop: load_main_menu_scene init_window_sound_etc
+
+	parse_main_menu_scene_file would queue jobs for loading asset packs
+
+

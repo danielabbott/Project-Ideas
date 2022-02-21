@@ -1,0 +1,59 @@
+Database schema:
+
+Table Publisher (id, name, url, email, password, trust_level);
+Table Package (id, name, url, publisher_id, category_id, trust_level, icon_url);
+
+Table Object (object_id, package_id, object_name, type, is_library, \
+    archive_url, data_hash, is_insecure);
+
+-- Object == specific object of a package
+-- archive_url points to a .tar.zst source code archive file.
+-- object_id is globally unique
+-- target is llvm target triple, js version, java version, etc.
+-- is_insecure is for marking old versions with security vulnerabilities
+
+Table ObjectBinary (object_binary_id, object_id, target_id);
+-- target is llvm target triple
+-- binaries would be provided for common&large packages e.g. clang, gcc, llvm libraries, etc.
+
+Table Target (target_id, llvm_triple, architecture, level);
+-- e.g. x86_64_v3: arch=x86_64, level = 3
+-- Allow mixing of targets with same architecture. e.g. x86_64_v3 application using x86_64 (level 0) library
+
+Table Dependency (object_id, dependency_object_id, runtime);
+-- Dependencies can be compile-time only if the library is compiled statically
+
+Table Channel (channel_id, package_id, name, latest_object_id);
+-- e.g. stable, latest, v3.0, nightly, etc.
+
+Table Category (category_id, name, description, icon_url);
+-- e.g. compilers, compression, images, 
+
+
+
+Database stored on server.
+
+Clients download copy of database. A second database exists on the client with the following schema:
+
+Table InstalledObject (object_id, manually_installed, target, dev_install);
+-- Multiple versions of an object can be installed (e.g. x86,x86_64,x86_64_v1)
+-- dev_install: has static archives, source, and header files
+
+When a package is installed (either manually or as a dependency) it is added to the file system:
+
+$(ROOT)/34/inc/my_library.h
+$(ROOT)/34/src/my_library.zig
+$(ROOT)/34/lib/my_library.a
+$(ROOT)/34/lib/my_library.so
+$(ROOT)/3/src/other_library.cpp
+$(ROOT)/3/inc/other_library.hpp
+$(ROOT)/1/exe/gcc
+$(ROOT)/1/exe/g++
+$(ROOT)/1/inc/stdlib.h
+
+The number in the file path is the object id. Multiple versions of a library/tool/application can coexist.
+
+This allows a package to depend on a specific object of clang/gcc/zig/etc.
+
+Two command line interfaces, one for developers and one for users.
+Developer version installs source & archives as well as executables and shared objects / DLLs.

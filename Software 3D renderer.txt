@@ -1,0 +1,5 @@
+Tile-based: 
+    do vertex transformations for all triangles
+    viewport is split into tiles
+    triangles are grouped by tiles (triangle could be in 0 or more tiles)
+    rasterise triangles - 1 thread per tile.

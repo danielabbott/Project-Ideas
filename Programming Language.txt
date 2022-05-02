@@ -1,0 +1,446 @@
+/*
+
+Objectives:
+    Simple enough syntax with a natural tendency towards legible code
+    Minimise fighting with the compiler
+    No undefined/unpredictable behaviour e.g. uninitialised variables/memory, Borrow checking
+    Interfacable with C or Zig
+    Fast iteration times, fast compile times
+    
+
+
+Statically typed
+RAII
+multiple inheritance is supported. inheriting a class just incorporates its fields and functions into the child class
+no move or copy constructors/operators.
+could disallow recursion - all recursive algortihms can be written in iterative form, plus GPU shaders don't support recursion
+
+
+compilation:
+code is compiled to a custom bytecode format
+that bytecode can then be 
+    - run in a VM (for debugging)
+    - compiled to debug machine code via llvm
+    - transpiled to C code and then compiled to optimised machine code via gcc
+
+
+compile time functionality is limited. if statements and expression are supported, no loops.
+if lookup tables etc. need to be pregenerated then this is done by compiling and running a separate program in the build process
+
+*/
+
+// In standard library
+
+// Builtin classes for primitive types. These are the only types that support operators.
+// Operators: + - * / %
+// Operators for integers only: & ^ ~ |
+// All operators are available as functions (add(), and(), xor(), etc.) for generic algorithms
+// Primitive types 
+// Float types also include functions like pow(), ceil(), floor(), mul(), mulScalar(), dot(), etc. which utilise SIMD where possible.
+
+// Builtins (all provided by compiler, not standard library):
+
+class Integer_<BITS: comptime_int, SIGNED: bool> : PrimitiveType {}
+class Float_<BITS: comptime_int> : PrimitiveType {}
+class bool{} // 1-bit type
+
+class Integer<BITS: comptime_int, SIGNED: bool> : SIMDType<Integer_<BITS, SIGNED>, 1> {}
+class Float<BITS: comptime_int> : SIMDType<Float_<BITS>, 1> {}
+
+// COMPONENTS == 0 => biggest available (depends on compile target. 1, 4, 8, or 16)
+class SIMDType<T: PrimitiveType, COMPONENTS: comptime_int> {}
+class u32 : SIMDType<Integer_<32, false>, 1> {}
+class u32x4 : SIMDType<Integer_<32, false>, 4> {}
+class u32xN : SIMDType<Integer_<32, false>, 0> {}
+class usize : SIMDType<Integer_<@usizeBits(), false>, 1> {}
+class isize : SIMDType<Integer_<@usizeBits(), true>, 1> {}
+class isizexN : SIMDType<Integer_<@usizeBits(), true>, 0> {}
+
+// etc.
+
+
+
+
+
+class LinearAlgebraVectorFunctions<T: SIMDType> {
+    fn dot(a: Self, b: Self) T$T { // T$T gets the T template parameter from T (extracts the primitive type from the SIMD type)
+        var multiplied = a.mul(b)
+        var sum: T = 0
+        for(var i: usize = 0; i < T$COMPONENTS; i++) {
+            sum += multiplied[i]
+        }
+        return sum
+    }
+}
+
+
+
+
+// built-in
+class ReferenceCountable {
+    users: i32 = 0,
+
+    destructor() {
+        assert(ctr == 0)
+    }
+}
+
+// built-in.
+// TODO prevent SharedReference types from being sent to other threads
+class SharedReference<T: ReferenceCountable> {
+    x: &mut T,
+
+    // Keeps ownership of 'ref' (this ordinarily wouldn't be allowed but this is a built-in type that bypasses this rule)
+    pub fn init(ref: &T) Self {
+        ref.users += 1
+        return Self {
+            .x = ref,
+        }
+    }
+
+
+    pub fn dup(self: *Self) Self {
+        self.x.users += 1
+        return Self {.x = self.x} // ignores normal borrowing rules here
+    }
+
+    destructor(self: *Self) void {
+        self.x.users -= 1
+    }
+
+}
+
+
+class MaybeComptimeAllocator<COMPTIME_ALLOCATOR: ?Allocator = null> {
+    if(COMPTIME_ALLOCATOR == null) {
+        allocator: Allocator,
+
+        pub fn init(a: Allocator) Self {
+            return Self {.allocator = a}
+        }
+    }
+
+    fn getAllocator(self: Self) Allocator {
+        if(COMPTIME_ALLOCATOR) |a| {
+            return a;
+        }
+        return self.allocator
+    }
+}
+
+class Object<T, CTA: ?Allocator = std.allocators.GeneralAllocator> : MaybeComptimeAllocator<CTA> {
+    x: &T,
+
+    pub fn init(value: T) !Self {
+        var slice = try CTA.?.alloc(@sizeOf(T), @alignmentOf(T))
+        var x = @bytesToRef(T, slice)
+        x = value
+        return Self{
+            .x = x,
+        }
+    }
+
+    pub fn initA(value: T, allocator: Allocator) !Self {
+        var slice = try allocator.alloc(@sizeOf(T), @alignmentOf(T))
+        var x = @bytesToRef(T, slice)
+        x = value
+        return Self{
+            : MaybeComptimeAllocator<CTA> = .(allocator),
+            .x = x,
+        }
+    }
+
+    destructor(self: &Self) void {
+        self.getAllocator().free(@refToBytes(self.x))
+    }
+}
+
+// TODO could HeapArray and Object be merged?
+
+class HeapArray<T, CTA: ?Allocator = std.allocators.GeneralAllocator, SizeType: Integer = usize> : MaybeComptimeAllocator<CTA> {
+    x: [SizeType]T,
+
+    pub fn init(n: usize, value: T) !Self {
+        var slice = try CTA.?.alloc(n * @sizeOf(T), @alignmentOf(T))
+        foreach(slice) |x| {
+            x = value
+        }
+
+        return Self{
+            .x = slice,
+        }
+    }
+
+    pub fn initA(value: T, allocator: Allocator) !Self {
+        var slice = try self.getAllocator().alloc(n * @sizeOf(T), @alignmentOf(T))
+        foreach(slice) |x| {
+            x = value
+        }
+
+        return Self{
+            .x = slice,
+        }
+    }
+
+    destructor(self: &Self) void {
+        self.getAllocator().free(self.x)
+    }
+}
+
+class Allocator {
+    // Functions without body must be implemented by classes that inherit from this.
+
+    fn alloc(self: *Self, bytes: usize, alignment: u32) ![]u8
+    fn free(self: *Self, x: []const u8) void
+}
+
+// Allocators cannot be used directly by application code. Must go through Object or HeapArray
+class GeneralAllocator {
+    fn alloc(self: *Self, bytes: usize, alignment: u32) ![]u8 {
+        assert(alignment > 0)
+        // ...
+    }
+    fn free(self: *Self, x: []const u8) void {
+        // ...
+        @invalidateReference(x) // calling code does not get back ownership of x
+    }
+}
+
+
+class ArrayList<T, SizeType: Integer = usize, CTA: ?Allocator = default_allocator> 
+    : MaybeComptimeAllocator<CTA>
+{
+    buffer: Slice<T, SizeType> = .(),
+    len: SizeType = 0,
+
+    // default constructor auto-generated
+
+    pub fn init(allocator: Allocator) Self : MaybeComptimeAllocator<CTA>(allocator) {
+        return Self {}
+    }
+
+    fn initRepeatedValue(init_len: SizeType, inital_value: T) !Self {
+        return Self {
+            .buffer = try getAllocator().allocMany<T>(init_len, [initial_value](idx: usize)T{
+                return initial_value
+            }),
+        }
+    }
+
+    fn getSlice(self: Self) []T {
+        return self.buffer[0 ..+ self.len]
+    }
+
+    fn getConstSlice(self: Self) []const T {
+        return self.getSlice()
+    }
+
+    fn append(self: &Self, item: T) !void {
+        assert(self.buffer.len >= self.len)
+        if(self.buffer.len == self.len) {
+            self.buffer = try self.getAllocator().realloc(self.buffer, self.len + 1, [item]()T{
+                return item
+            })
+        }
+        else {
+            self.buffer[self.len] = item
+        }
+        self.len += 1
+    }
+
+    destructor(self: &Self) void {
+        self.getAllocator().freeMany(self.buffer)
+    }
+}
+
+// rwclass is protected by a mutex or rw lock
+sharedclass MPSCChannel<T> {
+    list: ArrayList<T>,
+
+    pub fn send(self: &Self, x: T) !void {
+        try self.list.append(x)
+    }
+
+    pub fn recv(self: &Self) !ArrayList<T> {
+        var old_list = self.list
+        self.list = .init()
+        return old_list
+    }
+}
+
+// TODO how is multithreading going to work?
+
+/////////////////////////////////////////////////////////////////
+
+// Inheritance example:
+// TODO change constructors to functions in previous code examples and add pub to functions
+
+class A {
+    a: u32,
+
+    pub fn init(a: u32) Self {
+        return A {.a = a}
+    }
+}
+class B<T> {
+    b: T,
+
+    pub fn init(b: T) Self {
+        return B {.b = b}
+    }
+}
+
+class C : A, B<u32> {
+    c: u32,
+
+    pub fn init(a: u32, b: u32, c: u32) Self {
+        return C {
+            :A = .init(a), // initialise variables inherited from A
+            :B<T> = .init(b), // initialise variables inherited from B
+            .c = c,
+        }
+    }
+}
+
+...
+
+var c = C(1, 2, 3)
+
+
+////////////////////////////////////////////////////////////////
+class X<CTA: ?Allocator = null> : MaybeComptimeAllocator<CTA> {
+    my_data: Object<[]u8, CTA>,
+
+    pub fn init() !X {
+        return X {
+            .my_data = try self.getAllocator().allocMany<u8>(15, 0)
+        }
+    }
+}
+
+var stuff = try ArrayList<X>.init()
+var y = &stuff.get(0) // y has taken mut ownership of stuff.buffer[0] (I'm stuff)
+stuff.clear() // ERROR- this function requires mut ownership of stuff but it is partially owned by y
+
+
+
+/////////////////////////////////////////////////////////////////
+
+
+fn main(args: []const []const u8) !void {
+    {
+        var people = ArrayList<Person>()
+        foreach(people.getConstSlice()) |p, i| {
+            // TODO how would variable number of paramters work?
+            printFmt("%d: %s\n", i, people.first_name.constSlice())
+        }
+    }
+
+    {
+        const m1 = Mat4.zero()
+        const m2 = Mat4.identity()
+        const v = Vec4.init(1, 2, 3, 1)
+        // v2 = m2*m1*v0
+        const v2 = v.mulMat(m1.mul(m2))
+    }
+
+
+    var my_slice_ = try HeapArray<u32>.init(100)
+    var my_slice = my_slice_.get()
+
+    {
+        // Compiler recognises that these slices are seperate, ownership is split into 5 pieces
+        var my_subslice_1 = my_slice[0 ..+ 10]
+        var my_subslice_2 = my_slice[10 ..+ 10]
+        var my_subslice_3 = my_slice[25 ..+ 10]
+        // var my_subslice_4 = my_slice[25 ..+ 10] // INVALID
+    }
+
+    // Full ownership returned to my_slice
+
+    {
+        var my_subslice = my_slice[0 ..+ std.stdin.readInt<u32>()] // Takes the mutable reference
+        // var my_subslice_2 = my_slice[10 ..+ 10] // INVALID - my_subslice has taken the mut reference
+    }
+    
+}
+
+
+
+/////////////////////////////////////////////////////////////////////////////////
+
+// Interfacing with Zig code or C code via Zig
+
+// Define C/Zig structs and functions (C ABI) in our language
+
+cstruct LoadedImage {
+    width: u32,
+    height: u32,
+    channels: u32,
+    // slice type is pointer and usize length
+    data: c_interface.slice<u8>, //  malloc'd
+}
+
+cfn load_image (
+    file_path: c_interface.const_ptr<u8>, // null terminated 
+    desired_channels: u32,
+    output: c_interface.ptr<LoadedImage>,
+) c_interface.error_code // c_interface.error_code is u32 where 0 = non-error
+
+// Zig file can be generated from the above function & struct definitions
+// and used to write a zig wrapper around the c code
+
+
+
+/////////////////////////////////////////////////////////////////////////////////
+
+
+// example code: csv parser
+
+
+class CSV {
+    file_contents: HeapArray<u8>,
+    column_names: []const []const u8,
+    rows: []const []const []const u8,
+
+    fn loadFromFile(path: []const u8) !Self {
+        var column_names = std.ArrayList<[]const u8, u32, std.allocators.GeneralAllocator>.init()
+        var rows = std.ArrayList<[]const u8, u32, std.allocators.GeneralAllocator>.init()
+
+        {
+            var file = std.File.open(path, .{})
+            var file_contents = file.readAll<std.allocators.GeneralAllocator, u32>()
+            file.close() // invalidates file
+            var line_reader = LineReader<u32>.from(file_contents) // owns file_contents
+
+            // Column names
+            // TODO would this work with a borrow checker? LineReader would need to split slice in 2 somehow
+            var first_line = line_reader.next() orelse return error.InvalidCSVFile
+
+            while(first_line.len > 0) {
+                var name = std.strings.start(first_line, std.strings.cmp.neq(','))
+                if(name.len == 0) break
+
+                first_line = first_line[name.len ..]
+
+                try column_names.append(name) // column_names now owns name & first_line
+
+                // ...
+
+                first_line = line_reader.next() orelse break
+            }
+
+            while {
+                // ...
+            }
+        }
+
+        return Self {
+            // ...
+        }
+    }
+}
+
+/////////////////////
+
+// TODO error types and handling

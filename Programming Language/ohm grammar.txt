@@ -1,0 +1,85 @@
+// WIP
+
+Language {
+    OuterScope = (Function | ConstDecl)*
+    
+    ConstDecl = Visibility? "const" (VarDeclNoKeyword | VarDeclNoKeywordNoType)
+    
+    Function =  Visibility? "func" Name FunctionParams? FunctionReturns? Scope
+    Visibility = "pub" | "priv"
+    Name = ("_" | letter)+ ("_" | alnum)*
+    FunctionParams = "(" ((VarDeclNoKeyword | VarDeclNoKeywordNoType) ","?)* ")"
+    FunctionReturns = "->" (BothFunctionReturns | FunctionReturnTypes | FunctionErrorReturn)
+    BothFunctionReturns = FunctionReturnTypes FunctionErrorReturn
+    FunctionReturnTypes = TypesList
+    FunctionErrorReturn = "|" TypesList
+    TypesList = TypeExpression | TypesList_
+    TypesList_ = "(" (TypeExpression ","?)* ")"
+    
+    TypeExpression = "?"* TypeExpression_
+    TypeExpression_ = FunctionCall | TypeExpressionDot | Name
+    TypeExpressionDot = TypeExpression "." TypeExpression
+    FunctionCall = TypeExpression "(" ExpressionListItem* ")"
+    ExpressionListItem = Expression ","?
+    Expression = 
+        FunctionCall | BracketsExp | NotExp | BitwiseNotExp | 
+        ModExp | DivExp | MulExp  | 
+        AddExp | SubExp | 
+        BitwiseLeftExp | BitwiseRightExp | 
+        GTExp | GTEExp | LTExp | LTEExp | 
+        EqExp | NEQExp | 
+        BitwiseAndExp | BitwiseXorExp | BitwiseOrExp | 
+        AndExp | OrExp |
+        ClassDef | TypeExpression | digit
+    BracketsExp = "(" Expression ")"
+    MulExp = Expression "*" Expression
+    AddExp = Expression "+" Expression
+    DivExp = Expression "/" Expression
+    SubExp = Expression "-" Expression
+    ModExp = Expression "%" Expression
+    EqExp = Expression "==" Expression
+    GTExp = Expression ">" Expression
+    GTEExp = Expression ">=" Expression
+    LTExp = Expression "<" Expression
+    LTEExp = Expression "<=" Expression
+    NEQExp = Expression "!=" Expression
+    BitwiseAndExp = Expression "&" Expression
+    BitwiseOrExp = Expression "|" Expression
+    BitwiseXorExp = Expression "^" Expression
+    BitwiseNotExp = "~" Expression
+    AndExp = Expression "and" Expression
+    OrExp = Expression "or" Expression
+    NotExp = "!" Expression
+    BitwiseLeftExp = Expression "<<" Expression
+    BitwiseRightExp = Expression ">>" Expression
+    
+    VarDecl = "var" (VarDeclNoKeyword | VarDeclNoKeywordNoType)
+    VarDeclNoKeywordNoType = Name VarDeclDefaultValue
+    VarDeclNoKeyword = Name ":" TypeExpression VarDeclDefaultValue?
+    VarDeclDefaultValue = "=" Expression
+    
+    Scope = "{" (Scope | VarDecl | Statement)* "}"
+    
+    Statement = ReturnStatement | AddStatement | SubStatement | DivStatement | MulStatement | ModStatement | AssignStatement | RefAssignStatement | AndStatement | XorStatement | OrStatement
+    ReturnStatement = "return" ReturnList
+    ReturnList = Expression | RL_
+    RL_ = "(" (Expression ","?)* ")"
+    AddStatement = Name "+=" Expression
+    SubStatement = Name "-=" Expression
+    DivStatement = Name "/=" Expression
+    MulStatement = Name "*=" Expression
+    ModStatement = Name "%=" Expression
+    AssignStatement = Name "=" Expression
+    RefAssignStatement = Name ":=" Expression
+    AndStatement = Name "&=" Expression
+    XorStatement = Name "^=" Expression
+    OrStatement = Name "|=" Expression
+    
+    
+    ClassDef = "class" ClassInheritance? "{" ConstDecl* Field* "}"
+    ClassInheritance = ":" (TypeExpression ","?)*
+    Field = (VarDeclNoKeyword | VarDeclNoKeywordNoType)
+    
+    
+}
+

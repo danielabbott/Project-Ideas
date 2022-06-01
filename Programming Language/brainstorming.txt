@@ -1,0 +1,575 @@
+/*
+Work in progress. Syntax may be inconsistent.
+Will probably just end up reinventing rust :/
+
+Objectives:
+    Simple syntax, tendency towards legible code
+    Minimal fighting with the compiler
+    Minimal undefined/unpredictable behaviour e.g. uninitialised variables/memory, Borrow checking
+    Interfacable with C
+    Fast iteration times, fast compile times
+    Optimised machine code
+    
+
+
+Statically typed
+RAII
+multiple inheritance is supported by copying all fields & functions from the source class to the class being defined
+no move or copy constructors/operators (developer can write their own).
+
+
+compilation:
+code is compiled to a custom bytecode format
+that bytecode can then either be run in a JIT VM or compiled to machine code (LLVM/GCC) or both
+
+
+
+if lookup tables etc. need to be pregenerated then the code for doing so can be built and run as part of the build process
+
+
+Language split into 3 stages of execution: parse-time, compile-time, and run-time
+    Parse-time: When bytecode is generated. Includes borrow checking
+    Compile-time: When optimised machine code is generated
+    Run-time: Running pregenerated machine code ^ and JIT VM
+
+All code can be run runtime, it is up to the compiler to optimise code to run at compile time wherever possible.
+This includes things such as template parameters which are normal function parameters in this language.
+Generics work similar to Zig where a function (which can be run at runtime as well in this langauge) returns a type.
+Runtime generics require the JIT VM as the code cannot be compiled in advance (except possibly for cases such as simple data structures which only depend on the size of the type)
+If a function is called with a Type argument whose value cannor be determined at compile time then the application must ship or link to the VM which runs the function.
+
+
+object types
+    class: private fields, self-contained unit, dev writing calling code does assumes nothing about internals of class
+    struct: public fields, assumed that dev writing calling code has full knowledge about the struct's internals
+    bitfield: struct but tightly packed without field order rearranging
+    cstruct: struct but with C ABI compatibility
+
+
+*/
+
+
+// Builtin classes for primitive types. These are the only types that support operators.
+
+// Operators: + - * / %
+// Operators for integers only: & ^ ~ |
+// All operators are available as functions (add(), and(), xor(), etc.) for generic algorithms
+// Float types also include functions like pow(), ceil(), floor(), mul(), mulScalar(), dot(), etc. 
+// Functions and operators on primitives utilise SIMD where possible.
+
+// Builtins (all provided by compiler, not the standard library):
+
+// If elements is 1, this is a scalar type. If it is 0 then it uses the biggest available SIMD registers
+pub func PrimitiveType (bits, signed, is_float, elements) -> Type | enum {
+    if(bits == 0 or (is_float and !signed)) {
+        error .invalid_parameter
+    }
+    const bits_rounded = switch(bits) {
+        bits <= 8: 8
+        bits <= 16: 24
+        bits <= 32: 32
+        bits <= 64: 64
+    }
+    const vector_size = bits_rounded/4 * elements
+    if(elements != 0 and elements != 1 and vector_size != 16 and vector_size != 32 and vector_size != 64) {
+        return .invalid_parameter
+    }
+    // Returns type of requested size and type
+}
+
+// Primitive types.
+pub const bool = PrimitiveType(1, false, false, 1)
+pub const true = 1
+pub const false = 0
+pub const u32 = PrimitiveType(32, false, false, 1)
+pub const u32x4 = PrimitiveType(32, false, false, 4)
+pub const u32xN = PrimitiveType(32, false, false, 0)
+pub const usize = PrimitiveType(usize_bits_, false, false, 1)
+pub const isize = PrimitiveType(usize_bits_, true, false, 1)
+pub const isizexN = PrimitiveType(usize_bits_, true, false, 0)
+
+// etc.
+
+
+
+pub func LinearAlgebraFunctions (T: Type) -> Type | enum {
+    if(!T.extendsFromVariantOf(PrimitiveType) or !T.args.signed) {
+        error .invalid_parameter
+    }
+
+    return class : T {
+        // '&const' is optional - it is the default
+        pub func dot(a: &const Self, b: Self) -> T.baseType() {
+            var multiplied = a * b
+
+            var sum: T.baseType() = 0
+            var i: usize = 0
+            while(i < T.components()) {
+                sum += multiplied[i]
+                i++
+            }
+            return sum
+        }
+    }
+    
+}
+
+
+pub const Vec4 = LinearAlgebraFunctions(f32x4)
+
+
+/*
+Parameters can be passed by:
+    const reference (&const, default)
+    mutable reference (&mut)
+    move (&&) - this invalidates the object in the calling code, the function will run the destructor when it goes out of scope
+
+The compiler may implement const refs as a copy for small types
+*/
+
+priv func myFunction (p0: u32, p1: &mut u64, p2: MyObject, p3: &mut Obj, p4: && Obj, _: && u8, p6: &const MyObject) -> (u32, Obj) | ConstSlice(u8) {
+    p2 := p6 // reference assignment
+    if(p0 == 33) {
+        error "Error message (error type is ConstSlice(u8))"
+    }
+    return (2, Obj.init(0))
+}
+
+
+
+
+
+
+// Allocator reference that may be compile-time or run-time
+pub func AllocatorHolder (const_allocator: ?Allocator = std.allocators.GeneralAllocator) -> Type {
+    if(const_allocator) |a| {
+        return struct {
+            pub func getAllocator (_: &Self) -> Allocator {
+                return const_allocator
+            }
+        }
+    }   
+    else {
+        return struct {
+            allocator: Allocator
+
+            pub func getAllocator(self: &Self) -> Allocator {
+                return self.allocator
+            }
+        }
+    } 
+}
+
+// builtin
+// Heap-allocated object
+pub func HeapObject(T, const_allocator: ?Allocator = std.allocators.GeneralAllocator) {
+    // takes fields & functions from AllocatorHolder
+    return class : AllocatorHolder(const_allocator) {
+        x: Slice(u8), // TODO slice length should be compile-time known
+
+        pub func init (value: && T) -> Self | enum {
+            var slice = try const_allocator.?.alloc(T.size(), T.alignment())
+            slice.asReference(T) = value
+            return Self{
+                x = slice
+            }
+        }
+
+        pub func initWithAllocator(value: && T, allocator: Allocator) !Self {
+            var slice = try allocator.alloc(T.size(), T.alignment())
+            slice.asReference(T) = value
+            return Self{
+                x = slice
+            }
+        }
+
+        // If a function returns a reference, the variable it refers to must be a parameter
+        pub func get(self: &mut Self) -> &mut T {
+            return self.slice.asReference(T)
+        }
+        pub func getConst(self: &const Self) -> &const T {
+            return self.slice.asConstReference(T)
+        }
+
+        destructor(self: && Self) void {
+            self.getAllocator().free(@refToSlice(self.x))
+        }
+    }
+}
+
+var heap_object = try HeapObject([3]u8).init([3]u8{1,2,3})
+var heap_object2 = try HeapObject(u32x4).init([4]u32{1,2,3,4})
+heap_object.get()[0] += 1
+
+
+
+
+
+func f (x: &mut X, y: &mut Y) {
+    // TODO this will not work. We don't know the lifetimes.
+        // Maybe that doesn't matter? Use SharedReference in this case?
+    x.y := y
+}
+
+
+
+// built-in
+pub const ReferenceCountable = class {
+    _ref_count: i32 = 0,
+
+    destructor() {
+        assert _ref_count == 0
+    }
+}
+
+// built-in.
+// SharedReferences and types containing SharedReferences may not be sent between actors
+pub func SharedReference (T) -> Type | enum {
+    if(!t.extends(ReferenceCountable)) {
+        error .invalid_parameter
+    }
+
+    return class {
+        x: HeapObject(T),
+
+        // Takes ownership of object
+        pub func init (object: && HeapObject(T)) -> Self {
+            assert object.get()._ref_count == 0
+            return Self {
+                x = object
+            }
+        }
+
+
+        pub func dup (self: &mut Self) -> Self {
+            self.x._ref_count += 1
+            return Self {x = @forceCopy(self.x)} // bypasses borrow checker
+        }
+
+        destructor {
+            self.x._ref_count -= 1
+
+            if(self.x._ref_count <= 0) {
+                // call deconstructor on x, otherwise don't.
+            }
+        }
+    }
+
+}
+
+var application_window = SharedReference(Window):init(HeapObject(Window).init(Window:init("Title", 800, 600)))
+
+
+
+
+pub const Allocator = class {
+    // Functions without body are interface instructions
+    pub func alloc(self: &mut Self, bytes: usize, alignment: u32) -> Slice(u8, usize) | enum
+    pub func free(self: &mut Self, x: && Slice(u8, usize)) -> void
+}
+
+// Allocators should not be used directly by application code. Use the Object and Slice types
+pub const GeneralAllocator = class : Allocator {
+    pub func alloc(self: &mut Self, bytes: usize, alignment: u32) Slice(u8, usize) | enum {
+        assert alignment > 0
+        // ...
+    }
+
+    // && means take complete ownership of the object, the callers reference is invalidated
+    pub func free (self: &mut Self, x: && Slice(u8, usize)) {
+        // ...
+        @invalidateReference(x) // calling code does not get back ownership of x
+    }
+}
+
+// Builtin
+// TODO needs allocator (parameter and field, same as arraylist)
+pub func Slice(T: Type, SizeType: Type = usize, is_const: bool = false) -> Type | enum {
+    if(!SizeType.extends(Integer)) {
+        error .invalid_parameter
+    }
+
+    return class {
+        pointer: usize
+        length: SizeType // number of elements
+
+        // Destroys the old object, returns a new one.
+        pub func cast(self: && Self, NewType: Type, NewSizeType: Type = SizeType) -> Slice(NewType, NewSizeType, is_const) | enum {
+            if(T.isOrContainsClasses() or NewType.isOrContainsClasses()) {
+                // Classes must be created with the relevant function(s) in the class and properly destructed
+                error .type_error
+            }
+            if(self.pointer % NewType.alignment() != 0) {
+                error .alignment_error
+            }
+            if((self.length * T.size()) % NewType.size() != 0) {
+                error .size_error
+            }
+
+            if(T.isOrContainsClasses()) {
+                // run destructors ...
+            }
+            // ...
+        }
+
+        pub func reinit (initFunction: func (i: NewSizeType) -> NewType) | enum
+        {
+            // ...
+        }
+
+        pub func castAndReinit (self: && Self, NewType: Type, initFunction: func (i: NewSizeType) -> NewType, NewSizeType: Type = SizeType) 
+            -> Slice(NewType, NewSizeType, is_const) | enum 
+        {
+            // ...
+        }
+
+        pub func asConst(self: && Self) -> Slice(T, Type, false) {...}
+
+        // [] operator is provided by compiler, returns mut ref or const ref depending on value of is_const
+    }
+}
+
+// Builtin
+pub func ConstSlice(T: Type, SizeType: Type = usize) -> Type | enum {
+    return Slice(T, SizeType, true)
+}
+
+
+pub func ArrayList (T: Type, SizeType: Type = usize, const_allocator: ?Allocator = std.allocators.GeneralAllocator)
+ : AllocatorHolder(const_allocator)
+{
+    return class {
+        buffer: ?Slice(T) = null,
+        length: SizeType = 0,
+
+        pub func init -> Self {
+            return Self {}
+        }
+
+        pub func initWithAllocator (allocator: Allocator) -> Self {
+            return Self {
+                allocator = allocator
+            }
+        }
+
+        pub func setToRepeatedValue(self: &mut Self, init_len: SizeType, inital_value: T) () | enum {
+            foreach(self.getSlice()) |&mut x| {
+                x = initial_value
+            }
+            try self.setSize(init_len, [initial_value] (_: usize) -> T {
+                return initial_value
+            })
+        }
+
+        pub func getSlice(self: &mut Self) []T {
+            if(self.buffer == null) {
+                assert self.length == 0
+                return []T{3}
+            }
+            // TODO: How will ownership work?
+            return self.buffer.?[0 ..+ self.len]
+        }
+
+        pub func getConstSlice(self: &mut Self) []const T {
+            return self.getSlice()
+        }
+
+        // TODO how to leave extra memory uninitialised? perhaps an UninitialisedSlice type returned by allocators?
+
+        pub func append(self: &Self, item: T) !void {
+            assert self.buffer.len >= self.len
+            if(self.buffer.len == self.len) {
+                self.buffer = try self.getAllocator().realloc(self.buffer, self.len + 1, [item]()T{
+                    return item
+                })
+            }
+            else {
+                self.buffer[self.len] = item
+            }
+            self.len += 1
+        }
+
+        destructor {
+            self.getAllocator().freeMany(self.buffer)
+        }
+    }
+}
+
+// TODO how is multithreading going to work?
+
+
+
+/////////////////////////////////////////////////////////////////////////////////
+
+// Interfacing with C code
+
+// Define C structs and functions (C ABI) in our language
+
+cstruct LoadedImage {
+    width: u32,
+    height: u32,
+    channels: u32,
+    // slice types are pointer and usize length
+
+    // slice of u8, assumes C code allocated it with malloc
+    // Calls free() in destructor
+    data: std:c_interface:malloc_auto_Free_slice, 
+}
+
+cfn load_image (
+    file_path: c_interface.const_string, // null terminated ascii
+    desired_channels: u32,
+    output: std:c_interface:Ptr(LoadedImage),
+) i32
+
+
+/////////////////////
+
+
+// Only constants & functions are allowed in global namespace
+// Errors are permitted here and will cause compiler errors.
+pub const Foo1 = try Foo(u32)
+
+pub func Foo (field_type: Type, inherit_from: Type, comptime abc: u32) -> Type | void {
+    if(!field_type.extends(MyFieldParentType())) {
+        error
+    }
+
+    var c = class : inherit_from {
+        my_var: field_type,
+
+        pub func init(x: field_type) Self {
+            return Self{ field_type = x}
+        }
+    }
+
+    if(abc > 3) {
+        c.merge(class {
+            my_other_var: u32 = abc
+
+            pub func foo(self: &ref Self) {
+                self.my_other_var += 3
+            }
+        })
+    }
+
+    return c
+}
+
+/////////////////////
+
+// Borrow checker & lifetimes
+
+var a = A.init()
+var b = B.init()
+
+// := is reference reassignment operator
+a.b := B // ERROR: lifetime of a is longer than b
+
+
+// Ownership splitting:
+
+const A = struct {
+    field: u32 = 0
+    field2: u32 = 0
+}
+
+
+var a = A{}
+{
+    var b := a.field // ownership of field transferred to b
+    // a.destructor() // ERROR, ownership is split
+    var c := a.field2 // ownership of field2 transferred to c
+
+    // a.field = 3 // ERROR
+}
+
+functionThatCallsDestructor(a)
+// a.field = 3 // ERROR - a is invalid
+
+
+// Transfer of ownership
+
+// &mut means we borrow ownership of x (not life cycle). It is stored in the callers stack frame still
+// and we may not destroy it.
+func a(x: &mut X) {
+    // x.field.deconstructor() // ERROR: Don't have lifecycle ownership of x
+}
+
+// && means we take control of x's lifecycle. It is moved and stored in this functions stack frame now.
+func b(x: && X, y: &mut Y) {
+    // This is okay, this function controls the life cycle of x (and it's fields)
+    x.field.deconstructor()
+    y.x = x // (y.x is optional, now non-null) x has been moved, variable is inaccessible
+    // x.field = 3 // ERROR: x is no longer valid
+    // y.xref := x // ERROR: lifetime of x is less than y
+}
+
+func c {
+    var x = X{}
+    var y = Y{}
+
+    a(x) // a borrows ownership of x
+    b(x, y) // b takes ownership of x and takes control of its lifecycle
+    // x is now inaccessible.
+}
+
+// Because objects can be moved, this means their addresses can change at any time
+// The language does not expose pointers so this is fine
+// Moving an object requires a mutable reference (which is always exclusive) so no other code holds a reference to it.
+
+
+func foo {
+    var x = X{} // Variable x declared, instance of X created
+    if(userInput()) {
+        x.destructor()
+    }
+    else {
+        x.a += 1
+    }
+    x.a += 1 // ERROR: x may be destructed
+
+
+    var y = Y{}
+    var i: u32 = 0
+    while(i < 10) {
+        if(i == 1) {
+            // y.deconstructor() // ERROR: y may be destructed
+        }
+        i++
+    }
+
+
+    var z: ?Z = Z{}
+    var i: u32 = 0
+    while(i < 10) {
+        if(i == 1) {
+            z = null // fine
+        }
+        else {
+            z.?.f = 3 // compiles but crashes when i == 2
+        }
+        i++
+    }
+}
+
+/////////////////////
+
+/*
+Graphics.
+Standard library would include a graphics abstraction layer over opengl(es),webgl,vulkan,directx,webgpu,etc.
+This language can be compiled to glsl / spir-v / hlsl bytecode
+When compiling for GPUs, recursion, IO, multithreading, heap allocation, etc. are disabled.
+Standard library provides types for vertex inputs, uniforms, etc.
+Automatically splits uniform structs into fields for opengl 2
+Automatically finds minimum api versions needed. E.g. dynamically uniform indices for sampler arrays
+
+Standard library would also include
+    Generic Algorithms & data structures (lists, trees, hashmaps, B-trees, etc.)
+    Cryptographic algorithms
+    Time&date
+    String formatting
+    Utf8 validation
+    JSON
+    etc.
+*/

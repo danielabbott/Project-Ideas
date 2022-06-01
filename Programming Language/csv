@@ -1,0 +1,276 @@
+// WIP - syntax is inconsistent
+
+import std // std (standard library) is imported under the 'std' namespace
+
+const Allocator = std:allocators:GeneralAllocator
+const String = std:ArrayList(u8, u32, Allocator)
+const SubStr = std:strings:SubString(u32, u32)
+const SubStrList = ArrayList(SubStr, u16, Allocator)
+const ConstString = ConstSlice(u8)
+
+pub const FileHandle = if(os == .windows) usize else u32
+
+pub const IoOp = union(enum) {
+    open_file: String
+    read_file: struct {
+        fd: FileHandle
+        data: Slice(u8)
+    }
+    write_file: struct {
+        fd: FileHandle
+        data: ConstSlice(u8)
+    }
+    close_file: FileHandle
+}
+
+pub const Promise = class {
+    io_op: SharedReference(IoOp) 
+
+    pub func init(t_: SharedReference(T), io_: SharedReference(IO)) -> Self {
+        return Self { t = t_.copy() io = io_.copy() }
+    }
+
+    pub func wait (self: &mut Self) -> () | enum {}
+    pub func isReady (self: &mut Self) -> bool {}
+}
+
+// pub func Promise (T: Type) -> Type {
+//     return class {
+//         t: SharedReference(T)
+//         io: SharedReference(IO)
+
+//         pub func init(t_: SharedReference(T), io_: SharedReference(IO)) -> Self {
+//             return Self { t = t_.copy() io = io_.copy() }
+//         }
+
+//         destructor {
+
+//         }
+//     }
+// }
+
+pub const IO = class {
+    op_pool = ObjectPool(IoOp).init(allocators.GeneralAllocator)
+    io_ops = Map(u32, IoOp, allocators.GeneralAllocator).init()
+
+    pub func fileOpen(path: ConstString) -> Promise(FileHandle) | enum {
+        var op = IoOp.init()
+        // submit to async queue (io uring, non blocking api, whatever.)
+        try io_op_list.append(op)
+    }
+
+    // TODO how do we keep 'data' alive?? Lifetimes like rust?
+    pub func write(id: FileHandle, data: ConstSlice(u8)) -> Promise | enum {
+        var op = IoOp.init()
+        // submit to async queue (io uring, non blocking api, whatever.)
+        try io_op_list.append(op)
+    }
+}
+
+
+
+
+pub const File = class {
+
+    id: ?FileHandle = null
+    promise: union(enum) {
+        none: void,
+        open: Promise(FileHandle)
+    } = .none
+
+    // TODO: How to ensure File object lifetime??
+    pub func open(path: ConstString) -> Promise(FileHandle) | enum {
+        // ...
+    }
+}
+
+
+//////////////////////
+
+const Allocator = std.allocators.GeneralAllocator
+
+
+pub func simple -> | enum {
+    const paths: ConstSlice(ConstString) = []ConstString {"1.csv" "2.csv", "3.csv"}
+
+    foreach(paths) |path| {
+        var file = try std:File.open(path).wait()
+
+        const csv_string = file.readAll(Allocator, u32, 16*1024*1024).wait()
+        // file.close().wait()
+        file.destructor() // file variable now invalid, cannot be accessed/referenced
+
+        _ = try CSV.parse(csv_string)
+    }
+    
+}
+
+
+
+/////////////////////
+
+
+pub func CSV (allocator: std:Allocator) -> Type {
+    // struct: public fields, class: private fields
+    return struct {
+        file_contents: ConstString
+
+        // These are substrings of file_contents
+        column_names: SubStrList
+
+        next_row_idx: u32
+        next_row_start_offset: u32
+        row_fields: SubStrList
+
+        pub func parse (file_contents: ConstString) -> (Self) | enum {
+            var column_names = SubStrList.init()
+            var rows = std:ArrayList(SubStrList, u32, Allocator).init()
+            var line_reader = std:strings:LineReader(u32, u32).from(file_contents) // takes const ref shared ownership
+
+            // Column names
+            var first_line: SubStr = line_reader.next()
+
+            while(first_line.length > 0) {
+                first_line.skip(file_contents, std:strings:cmp:IsASCIIWhitespace)
+
+                var name = std:strings:start(file_contents, first_line, std:strings:cmp:Neq(','))
+                if(name.length == 0) { break }
+
+                first_line = first_line.substr(name.length)
+                name.trimEnd(file_contents, std:strings:cmp:IsASCIIWhitespace)
+
+                try column_names.append(name)
+
+                first_line = line_reader.next()
+            }
+            
+
+            return Self {
+                file_contents = file_contents // const shared ownership transfered to return value
+                column_names = column_names
+            }
+        }
+
+        // TODO how do we do this without slices? Can't have partial ownership of an array like this :/
+        pub func nextLine (self: &mut Self) -> []SubStr | enum {
+            self.row_fields.clear()
+            // TODO
+            return self.row_fields.takeArray()
+        }
+    }
+}
+
+const dude = 😎
+
+
+// std:strings:SubString
+pub func SubString (OffsetType: Type, LengthType: Type) -> Type | enum {
+    if(!OffsetType.childOf(Integer) or !LengthType.childOf(Integer)) {
+        print("Types must be integers")
+        error .InvalidParameter
+    }
+    if(OffsetType.Integer.bits < LengthType.Integer.bits) {
+        print("Length bits should be <= offset bits")
+        error .InvalidParameter
+    }
+
+    return struct {
+        start: OffsetType,
+        length: LengthType,
+
+        pub func substr(self: &mut Self, x: LengthType) -> Self {
+            return Self {
+                start = self.start + x
+                length = self.length - x
+            }
+        }
+    }
+}
+
+
+// std:strings:start
+// parameters without a type can have any (can be comptime or runtime type)
+pub func start (string: HeapArray(u8), sub_str, comparisonFunction) -> (@type(sub_str)) {
+    if(!@type(sub_str).childOf(SubString)) {
+        print("Expected SubString")
+        error .InvalidParameter
+    }
+    if(!@type(comparisonFunction).childOf(Function)) {
+        print("Expected Function")
+        error .InvalidParameter
+    }
+
+    var l: @type(sub_str).LengthType = 0
+    while(l < sub_str.length and comparisonFunction(string.get(l))) { l++ }
+
+
+    return @type(sub_str) {
+        start: sub_str.start,
+        length: l
+    }
+}
+
+
+// std:strings:cmp:Neq 
+pub func Neq (cmp_to: u8) -> bool {
+    return func (c: u8) -> bool {
+        return c != cmp_to
+    }
+}
+
+
+/////////////////////////
+
+
+
+pub func withAsyncIO () -> () | enum {
+    const paths = []ConstString {"1.csv" "2.csv", "3.csv"}
+
+    var csv_objects: [3]?CSV = {* null *}
+
+    Slice(Promise, paths.len).init(func (i: usize) -> Promise | enum {
+        const path = paths[i]
+        var file_promise = try std:io.File.open(path)
+        try file_promise.when(func (file: && File) -> | enum {
+            file.readAllAndClose(Allocator, u32, 16*1024*1024).when(func (csv_string: Slice(u8)) -> | enum {
+                _ = try CSV.parse(csv_string)
+            })
+            file.destructor()
+        })
+    })
+
+    // Slice destructor calls Promise destructors, hence all promises are waited for automatically.
+}
+
+
+pub func withTaskGraph () -> () | enum {
+    const paths = []ConstString {"1.csv" "2.csv", "3.csv"}
+    var task_graph = std:TaskGraph(std:allocators:GeneralAllocator).init()
+
+    var tasks = Slice(std:TaskGraph:Task, paths.len).init(func (i: usize) -> std:TaskGraph:Task {
+        // task_graph.addIOTask(IoOp.open())
+        // task_graph.addIOTask(IoOp.read())
+        // task_graph.addTask(CSVParser.init())
+    })
+
+    task_graph.submitMany(task_graph)
+
+}
+
+pub const CSVParser = class: Actor {
+    file_contents: &const ConstString
+    csv: ?CSV = null
+
+
+    pub func init(file_contents: &const ConstString) -> CSVFileLoadAndParse {
+        return CSVParser {file_contents = file_contents}
+    }
+
+    pub func run(self: &mut Self) {
+        self.csv = CSV.parse(self.file_contents)
+    }
+
+    pub func takeOutput(self: &mut Self) -> CSV | enum {
+
+    }
+}
